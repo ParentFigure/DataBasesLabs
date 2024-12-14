@@ -309,60 +309,126 @@ ORDER BY
 
 
 -- lab 5 
+CREATE TABLE IF NOT EXISTS `user_activity` (
+  `activity_id` INT NOT NULL AUTO_INCREMENT,
+  `user_id` INT NOT NULL,
+  `activity_type` ENUM('Login', 'Logout', 'Booking', 'Payment') NOT NULL,
+  `activity_date` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `description` TEXT NULL DEFAULT NULL,
+  PRIMARY KEY (`activity_id`)
+) ENGINE = InnoDB
+DEFAULT CHARACTER SET = utf8mb4
+COLLATE = utf8mb4_0900_ai_ci;
 
-CREATE TABLE IF NOT EXISTS user_logs (
-    log_id INT NOT NULL AUTO_INCREMENT,
-    user_id INT NOT NULL,
-    username VARCHAR(100) NOT NULL,
-    email VARCHAR(255) NOT NULL,
-    action VARCHAR(50) NOT NULL,
-    log_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (log_id)
-);
+DELIMITER //
 
-DELIMITER $$
-CREATE TRIGGER log_new_user
-AFTER INSERT ON user
+CREATE TRIGGER `before_insert_user_activity`
+BEFORE INSERT ON `user_activity`
 FOR EACH ROW
 BEGIN
-    INSERT INTO user_logs (user_id, username, email, action)
-    VALUES (NEW.user_id, NEW.username, NEW.email, 'User Added');
-END$$
+  IF NOT EXISTS (
+    SELECT 1
+    FROM `user`
+    WHERE `user_id` = NEW.`user_id`
+  ) THEN
+    SIGNAL SQLSTATE '45000'
+    SET MESSAGE_TEXT = 'The user_id does not exist in the user table.';
+  END IF;
+END //
+
 DELIMITER ;
 
--- INSERT INTO user (username, email, password, account_status) 
--- VALUES ('new_user', 'new_user@example.com', 'securepass', 'Active');
+DELIMITER //
 
--- SELECT * FROM user_logs;
+CREATE TRIGGER `before_delete_user`
+BEFORE DELETE ON `user`
+FOR EACH ROW
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM `user_activity`
+    WHERE `user_id` = OLD.`user_id`
+  ) THEN
+    SIGNAL SQLSTATE '45000'
+    SET MESSAGE_TEXT = 'Cannot delete user because they have associated activities in the user_activity table.';
+  END IF;
+END //
+
+DELIMITER ;
+
+INSERT INTO `user_activity` (user_id, activity_type, description)
+VALUES (6, 'Login', 'User logged in successfully.');
+
+INSERT INTO `user_activity` (user_id, activity_type, description)
+VALUES (999, 'Login', 'Invalid user ID.');
+
+DELETE FROM `user` WHERE user_id = 1;
+
+
+-- пареметризована процедура
+DELIMITER $$
+
+CREATE PROCEDURE InsertIntoSpecifiedTable(
+    IN table_name VARCHAR(64),
+    IN columns TEXT,
+    IN column_values TEXT -- Заміна "values" на "column_values"
+)
+BEGIN
+    -- Формуємо динамічний SQL-запит
+    SET @query = CONCAT('INSERT INTO ', table_name, ' (', columns, ') VALUES (', column_values, ')');
+
+    -- Підготовка та виконання динамічного запиту
+    PREPARE stmt FROM @query;
+    EXECUTE stmt;
+    DEALLOCATE PREPARE stmt;
+END $$
+
+DELIMITER ;
+
+
+CALL InsertIntoSpecifiedTable(
+    'user',
+    'username, email, password, account_status',
+    "'dynamic_user', 'dynamic_user@example.com', 'securepassword', 'Active'"
+);
+
+
+CREATE TABLE test_table (
+    id INT AUTO_INCREMENT PRIMARY KEY,  -- Унікальний ідентифікатор
+    name VARCHAR(255) NOT NULL          -- Колонка для значення 'NonameX'
+);
 
 
 DELIMITER $$
-CREATE PROCEDURE insert_new_user(
-    IN p_username VARCHAR(100),
-    IN p_email VARCHAR(255),
-    IN p_password VARCHAR(255),
-    IN p_account_status VARCHAR(10)
+
+CREATE PROCEDURE InsertNonameRows(
+    IN table_name VARCHAR(64),
+    IN column_name VARCHAR(64),
+    IN start_number INT
 )
 BEGIN
-    -- Перевіряємо, чи вказаний статус є допустимим
-    IF p_account_status NOT IN ('Active', 'Blocked') THEN
-        SIGNAL SQLSTATE '45000' 
-        SET MESSAGE_TEXT = 'Invalid account status. Allowed values: Active, Blocked';
-    END IF;
+    DECLARE i INT DEFAULT 0;
 
-    -- Перевіряємо, чи вже існує користувач з таким ім'ям або email
-    IF EXISTS (SELECT 1 FROM user WHERE username = p_username OR email = p_email) THEN
-        SIGNAL SQLSTATE '45000' 
-        SET MESSAGE_TEXT = 'User with this username or email already exists';
-    ELSE
-        -- Додаємо нового користувача
-        INSERT INTO user (username, email, password, account_status)
-        VALUES (p_username, p_email, p_password, p_account_status);
-    END IF;
-END$$
+    WHILE i < 10 DO
+        SET @row_value = CONCAT('Noname', start_number + i);
+        SET @query = CONCAT('INSERT INTO ', table_name, ' (', column_name, ') VALUES (''', @row_value, ''')');
+        
+        -- Виконання динамічного SQL-запиту
+        PREPARE stmt FROM @query;
+        EXECUTE stmt;
+        DEALLOCATE PREPARE stmt;
+        
+        SET i = i + 1; -- Збільшення лічильника
+    END WHILE;
+END $$
+
 DELIMITER ;
 
--- CALL insert_new_user('example_user', 'example_user@example.com', 'secure_password', 'Active');
+CALL InsertNonameRows('test_table', 'name', 5);
+
+SELECT * FROM test_table;
+DROP TABLE test_table;
+
 
 DELIMITER $$
 CREATE FUNCTION user_exists(p_username VARCHAR(100), p_email VARCHAR(255))
@@ -383,7 +449,7 @@ BEGIN
 END$$
 DELIMITER ;
 
-
+select * from user;
 -- SELECT user_exists('example_user', 'example_user@example.com') AS UserExists;
 
 DELIMITER $$
@@ -413,7 +479,7 @@ BEGIN
     SET @create_table2 = CONCAT(
         'CREATE TABLE ', @table2_name, ' LIKE user'
     );
-
+    
     PREPARE stmt1 FROM @create_table1;
     EXECUTE stmt1;
     DEALLOCATE PREPARE stmt1;
@@ -461,6 +527,81 @@ END$$
 DELIMITER ;
 
 
+CALL distribute_users_to_tables(); 
 
--- CALL distribute_users_to_tables();
 
+DELIMITER $$
+
+CREATE TRIGGER no_double_zero_in_username
+BEFORE INSERT ON user
+FOR EACH ROW
+BEGIN
+    IF NEW.username LIKE '%00' THEN
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'Username cannot end with two zeros';
+    END IF;
+END $$
+
+CREATE TRIGGER no_double_zero_in_username_on_update
+BEFORE UPDATE ON user
+FOR EACH ROW
+BEGIN
+    IF NEW.username LIKE '%00' THEN
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'Username cannot end with two zeros';
+    END IF;
+END $$
+
+DELIMITER ;
+
+INSERT INTO user (username, email, password, account_status, registration_date)
+VALUES ('user00', 'user00@example.com', 'password', 'Active', NOW());
+
+
+DELIMITER $$
+
+-- Забороняємо INSERT
+CREATE TRIGGER block_insert_blockedfunds
+BEFORE INSERT ON blockedfunds
+FOR EACH ROW
+BEGIN
+    SIGNAL SQLSTATE '45000'
+    SET MESSAGE_TEXT = 'Inserts are not allowed in the blockedfunds table';
+END $$
+
+-- Забороняємо UPDATE
+CREATE TRIGGER block_update_blockedfunds
+BEFORE UPDATE ON blockedfunds
+FOR EACH ROW
+BEGIN
+    SIGNAL SQLSTATE '45000'
+    SET MESSAGE_TEXT = 'Updates are not allowed in the blockedfunds table';
+END $$
+
+-- Забороняємо DELETE
+CREATE TRIGGER block_delete_blockedfunds
+BEFORE DELETE ON blockedfunds
+FOR EACH ROW
+BEGIN
+    SIGNAL SQLSTATE '45000'
+    SET MESSAGE_TEXT = 'Deletes are not allowed in the blockedfunds table';
+END $$
+
+DELIMITER ;
+
+INSERT INTO blockedfunds (user_id, amount, block_date) VALUES (1, 100.00, NOW());
+
+
+DELIMITER $$
+
+CREATE TRIGGER block_deletes_reservation
+BEFORE DELETE ON reservation
+FOR EACH ROW
+BEGIN
+    SIGNAL SQLSTATE '45000'
+    SET MESSAGE_TEXT = 'Deletion of rows is not allowed in the reservation table';
+END $$
+
+DELIMITER ;
+
+DELETE FROM reservation WHERE reservation_id = 1;

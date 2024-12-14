@@ -6,7 +6,7 @@ app = Flask(__name__)
 mysql = MySQL(app)
 
 app.config['MYSQL_USER'] = 'root'
-app.config['MYSQL_PASSWORD'] = 'msmL02mysql'
+app.config['MYSQL_PASSWORD'] = 'root'
 app.config['MYSQL_HOST'] = 'localhost'
 app.config['MYSQL_DB'] = 'bookingplatform'
 
